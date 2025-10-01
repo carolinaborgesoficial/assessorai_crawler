@@ -3,3 +3,5 @@ weaviate-client
 tqdm
 tiktoken
 python-dotenv
+PyMuPDF
+html2text
