@@ -72,7 +72,7 @@ services:
     env_file:
       - .env
     environment:
-      - SCRAPYD_SERVERS=nginx:8080/scrapyd
+      - SCRAPYD_SERVERS=scrapyd:6800
     volumes:
       # Compartilhar os mesmos volumes para visualização
       - ./items:/app/items
