@@ -17,6 +17,7 @@ services:
 
   scrapyd:
     build: .
+    image: assessorai-crawler:latest
     container_name: assessorai-scrapyd
     command: sh -c "rm -f twistd.pid && scrapyd --pidfile="
     expose:
@@ -47,6 +48,7 @@ services:
 
   logparser:
     build: .
+    image: assessorai-crawler:latest
     container_name: assessorai-logparser
     command: logparser --scrapyd_logs_dir=/app/logs
     env_file:
@@ -62,6 +64,7 @@ services:
 
   scrapydweb:
     build: .
+    image: assessorai-crawler:latest
     container_name: assessorai-scrapydweb
     command: scrapydweb
     expose:

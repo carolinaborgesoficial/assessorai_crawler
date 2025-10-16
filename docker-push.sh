@@ -10,18 +10,19 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 IMAGE_NAME="assessorai-crawler"
+IMAGE_TAG="latest"
 
 function print_usage() {
     echo "Uso: $0 [registry] [username] [version]"
     echo ""
     echo "Registries disponíveis:"
+    echo "  ghcr         - GitHub Container Registry (ghcr.io) [RECOMENDADO]"
     echo "  dockerhub    - Docker Hub (docker.io)"
-    echo "  ghcr         - GitHub Container Registry (ghcr.io)"
     echo ""
     echo "Exemplos:"
+    echo "  $0 ghcr pmarkun v1.0.0              # Recomendado"
     echo "  $0 dockerhub myusername v1.0.0"
-    echo "  $0 ghcr pmarkun v1.0.0"
-    echo "  $0 dockerhub myusername          # Usa 'latest' como versão"
+    echo "  $0 ghcr pmarkun                     # Usa 'latest' como versão"
     echo ""
 }
 
@@ -51,10 +52,10 @@ function push_dockerhub() {
     
     # Tag da imagem
     echo -e "${BLUE}🏷️  Criando tags...${NC}"
-    docker tag ${IMAGE_NAME}:latest ${username}/${IMAGE_NAME}:${version}
+    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${username}/${IMAGE_NAME}:${version}
     
     if [ "$version" != "latest" ]; then
-        docker tag ${IMAGE_NAME}:latest ${username}/${IMAGE_NAME}:latest
+        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${username}/${IMAGE_NAME}:latest
     fi
     
     # Push
@@ -96,10 +97,10 @@ function push_ghcr() {
     
     # Tag da imagem
     echo -e "${BLUE}🏷️  Criando tags...${NC}"
-    docker tag ${IMAGE_NAME}:latest ghcr.io/${username}/${IMAGE_NAME}:${version}
+    docker tag ${IMAGE_NAME}:${IMAGE_TAG} ghcr.io/${username}/${IMAGE_NAME}:${version}
     
     if [ "$version" != "latest" ]; then
-        docker tag ${IMAGE_NAME}:latest ghcr.io/${username}/${IMAGE_NAME}:latest
+        docker tag ${IMAGE_NAME}:${IMAGE_TAG} ghcr.io/${username}/${IMAGE_NAME}:latest
     fi
     
     # Push
