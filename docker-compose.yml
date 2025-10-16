@@ -1,0 +1,91 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: assessorai-nginx
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./logs:/app/logs:ro
+      - ./items:/app/items:ro
+    networks:
+      - scrapy-network
+    depends_on:
+      - scrapyd
+      - scrapydweb
+    restart: unless-stopped
+
+  scrapyd:
+    build: .
+    container_name: assessorai-scrapyd
+    command: sh -c "rm -f twistd.pid && scrapyd --pidfile="
+    expose:
+      - "6800"
+    env_file:
+      - .env
+    volumes:
+      # Storage persistente
+      - ./items:/app/items
+      - ./logs:/app/logs
+      - ./dbs:/app/dbs
+      - ./downloads:/app/downloads
+      # Eggs directory para persistir projetos deployados
+      - scrapyd-eggs:/app/eggs
+      # Montar o código do projeto para permitir atualizações via git
+      - ./assessorai_crawler:/app/assessorai_crawler
+      - ./scrapy.cfg:/app/scrapy.cfg
+      - ./scrapyd.conf:/app/scrapyd.conf
+    networks:
+      - scrapy-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6800"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  logparser:
+    build: .
+    container_name: assessorai-logparser
+    command: logparser --scrapyd_logs_dir=/app/logs
+    env_file:
+      - .env
+    volumes:
+      # Acessar os logs para parsing
+      - ./logs:/app/logs
+    networks:
+      - scrapy-network
+    depends_on:
+      - scrapyd
+    restart: unless-stopped
+
+  scrapydweb:
+    build: .
+    container_name: assessorai-scrapydweb
+    command: scrapydweb
+    expose:
+      - "5000"
+    env_file:
+      - .env
+    environment:
+      - SCRAPYD_SERVERS=nginx:8080/scrapyd
+    volumes:
+      # Compartilhar os mesmos volumes para visualização
+      - ./items:/app/items
+      - ./logs:/app/logs
+      - ./scrapydweb_settings_v11.py:/app/scrapydweb_settings_v11.py
+    networks:
+      - scrapy-network
+    depends_on:
+      - scrapyd
+      - logparser
+    restart: unless-stopped
+
+networks:
+  scrapy-network:
+    driver: bridge
+
+volumes:
+  scrapyd-eggs:
+    driver: local
