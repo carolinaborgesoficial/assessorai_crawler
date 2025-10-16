@@ -120,13 +120,11 @@ from datetime import datetime
 from urllib.parse import urljoin
 from ..items import ProposicaoItem
 
-class Proposicoes[UF]Spider(scrapy.Spider):
-    name = 'proposicoes[uf]'
+class Proposicoes[CASA]Spider(scrapy.Spider):
+    name = 'proposicoes[casa]'
     house = 'Nome da Casa Legislativa'
-    uf = '[uf]'
-    slug = f'proposicoes{uf}'
-    allowed_domains = ['www.al[uf].gov.br']
-    start_urls = ['https://www.al[uf].gov.br/proposicoes']
+    allowed_domains = ['www.[site da casa].gov.br']
+    start_urls = ['https://www.[site da casa].gov.br/proposicoes']
     
     def parse(self, response):
         """Parse da página de listagem de proposições"""
@@ -206,19 +204,7 @@ class Proposicoes[UF]Spider(scrapy.Spider):
             pass
         
         return ''
-    
-    def convert_to_markdown(self, html_content):
-        """Converte HTML para markdown limpo"""
-        if not html_content:
-            return ''
-        
-        # Usar biblioteca de conversão (ver seção de bibliotecas)
-        # Exemplo com html2text
-        import html2text
-        h = html2text.HTML2Text()
-        h.ignore_links = False
-        h.ignore_images = True
-        return h.handle(html_content)
+
 ```
 
 ### Passo 2: Bibliotecas Úteis
@@ -227,19 +213,10 @@ Adicione ao `requirements.txt`:
 
 ```txt
 # Parsing e extração
-beautifulsoup4          # Parsing HTML avançado
 lxml                    # Parser XML/HTML rápido
-selectolax              # Parser HTML ultrarrápido
 
 # Conversão de documentos
-html2text               # HTML para Markdown
-markdownify             # HTML para Markdown (alternativa)
-pypandoc                # Conversão universal de documentos
-
-# Processamento de PDF
-PyPDF2                  # Extração de texto de PDF
-pdfplumber              # PDF parsing avançado
-pymupdf                 # PDF processing (fitz)
+markitdown              # https://github.com/microsoft/markitdown
 
 # Processamento de texto
 bleach                  # Limpeza de HTML
@@ -249,279 +226,6 @@ textract                # Extração de texto de vários formatos
 requests-html           # Requests com suporte a JavaScript
 selenium                # Automação de browser (para SPAs)
 playwright              # Alternativa moderna ao Selenium
-```
-
-### Passo 3: Pseudocódigo Detalhado
-
-```python
-def develop_new_crawler():
-    """
-    Fluxo completo para desenvolver crawler de nova casa legislativa
-    """
-    
-    # FASE 1: RECONHECIMENTO
-    target_site = identify_legislative_house_website()
-    propositions_section = find_propositions_listing_page(target_site)
-    
-    # FASE 2: ANÁLISE DA ESTRUTURA
-    pagination_pattern = analyze_pagination(propositions_section)
-    list_item_selectors = identify_list_item_selectors(propositions_section)
-    individual_page_pattern = analyze_individual_pages(propositions_section)
-    
-    # FASE 3: EXTRAÇÃO DE METADADOS
-    for page in paginate_through_listings(propositions_section):
-        for item_link in extract_proposition_links(page):
-            metadata = extract_basic_info_from_listing(item_link)
-            
-            # FASE 4: EXTRAÇÃO DE CONTEÚDO COMPLETO
-            individual_page = fetch_individual_page(item_link)
-            full_content = extract_full_content(individual_page)
-            
-            # FASE 5: PROCESSAMENTO E LIMPEZA
-            cleaned_content = clean_and_normalize_text(full_content)
-            markdown_content = convert_to_markdown(cleaned_content)
-            
-            # FASE 6: ESTRUTURAÇÃO DE DADOS
-            proposition_item = create_proposition_item(
-                title=metadata['title'],
-                house=target_site['house_name'],
-                authors=metadata['authors'],
-                date=metadata['date'],
-                full_text=markdown_content,
-                url=item_link
-            )
-            
-            yield proposition_item
-
-def extract_full_content(page_response):
-    """Estratégias para extrair texto completo"""
-    
-    # ESTRATÉGIA 1: Texto direto na página HTML
-    if has_direct_text_content(page_response):
-        return extract_html_text(page_response)
-    
-    # ESTRATÉGIA 2: Download de PDF
-    elif has_pdf_link(page_response):
-        pdf_url = get_pdf_link(page_response)
-        pdf_content = download_and_extract_pdf(pdf_url)
-        return pdf_content
-    
-    # ESTRATÉGIA 3: Documento Word/DOC
-    elif has_doc_link(page_response):
-        doc_url = get_doc_link(page_response)
-        doc_content = download_and_extract_doc(doc_url)
-        return doc_content
-    
-    # ESTRATÉGIA 4: Conteúdo carregado via JavaScript
-    elif requires_javascript(page_response):
-        js_content = extract_with_selenium(page_response.url)
-        return js_content
-    
-    return ""
-```
-
-### Passo 4: Implementações Específicas por Tipo de Conteúdo
-
-```python
-# Para sites com PDF
-def extract_pdf_content(pdf_url):
-    """Extrai texto de PDF usando pdfplumber"""
-    import pdfplumber
-    import requests
-    
-    response = requests.get(pdf_url)
-    with pdfplumber.open(BytesIO(response.content)) as pdf:
-        text = ""
-        for page in pdf.pages:
-            text += page.extract_text() + "\n"
-    return text
-
-# Para sites com JavaScript/SPA
-def extract_with_selenium(url):
-    """Extrai conteúdo de sites com JavaScript"""
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    
-    options = Options()
-    options.add_argument('--headless')
-    driver = webdriver.Chrome(options=options)
-    
-    driver.get(url)
-    # Aguardar carregamento
-    WebDriverWait(driver, 10).until(
-        EC.presence_of_element_located((By.CLASS_NAME, "content"))
-    )
-    
-    content = driver.find_element(By.CLASS_NAME, "texto-completo").text
-    driver.quit()
-    return content
-
-# Para limpeza e conversão
-def clean_and_convert_to_markdown(html_content):
-    """Limpa HTML e converte para markdown"""
-    import bleach
-    import html2text
-    
-    # Limpar HTML malicioso/desnecessário
-    clean_html = bleach.clean(
-        html_content,
-        tags=['p', 'br', 'strong', 'em', 'ul', 'ol', 'li', 'h1', 'h2', 'h3'],
-        strip=True
-    )
-    
-    # Converter para markdown
-    h = html2text.HTML2Text()
-    h.ignore_links = False
-    h.ignore_images = True
-    h.body_width = 0  # Sem quebra de linha
-    
-    markdown = h.handle(clean_html)
-    
-    # Limpeza adicional
-    markdown = re.sub(r'\n\n+', '\n\n', markdown)  # Múltiplas quebras
-    markdown = markdown.strip()
-    
-    return markdown
-```
-
-### Passo 5: Ferramentas de Desenvolvimento e Debug
-
-```python
-# Ferramenta para análise de seletores CSS
-def analyze_page_structure(url):
-    """Analisa estrutura da página para identificar seletores"""
-    import requests
-    from bs4 import BeautifulSoup
-    
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    
-    # Identificar possíveis seletores para proposições
-    potential_selectors = [
-        'a[href*="proposicao"]',
-        'a[href*="projeto"]', 
-        'a[href*="pl"]',
-        '.proposicao-item a',
-        '.projeto-link',
-        'tr td a'  # Para tabelas
-    ]
-    
-    for selector in potential_selectors:
-        elements = soup.select(selector)
-        if elements:
-            print(f"Selector '{selector}' encontrou {len(elements)} elementos")
-            for i, elem in enumerate(elements[:3]):  # Primeiros 3
-                print(f"  {i+1}: {elem.get('href')} - {elem.text.strip()}")
-
-# Ferramenta para testar extração
-def test_extraction(url, selectors_dict):
-    """Testa seletores em uma página específica"""
-    import requests
-    from bs4 import BeautifulSoup
-    
-    response = requests.get(url)
-    soup = BeautifulSoup(response.content, 'html.parser')
-    
-    results = {}
-    for field, selector in selectors_dict.items():
-        try:
-            element = soup.select_one(selector)
-            results[field] = element.text.strip() if element else 'NOT FOUND'
-        except Exception as e:
-            results[field] = f'ERROR: {str(e)}'
-    
-    return results
-
-# Exemplo de uso das ferramentas
-if __name__ == "__main__":
-    # Analisar estrutura da página de listagem
-    analyze_page_structure("https://www.alxx.gov.br/proposicoes")
-    
-    # Testar extração em página individual
-    test_selectors = {
-        'title': 'h1.titulo',
-        'authors': '.autores',
-        'date': '.data-apresentacao',
-        'subject': '.ementa',
-        'full_text': '.texto-completo'
-    }
-    
-    results = test_extraction(
-        "https://www.alxx.gov.br/proposicao/123", 
-        test_selectors
-    )
-    
-    for field, value in results.items():
-        print(f"{field}: {value}")
-```
-
-### Passo 6: Estratégias por Tipo de Site
-
-```python
-# TIPO 1: Sites estáticos simples (HTML tradicional)
-class SimpleHTMLSpider(scrapy.Spider):
-    """Para sites com HTML estático e estrutura simples"""
-    
-    def parse_static_listing(self, response):
-        # Seletores diretos funcionam bem
-        links = response.css('a.proposicao-link::attr(href)').getall()
-        for link in links:
-            yield response.follow(link, self.parse_proposicao)
-
-# TIPO 2: Sites com paginação AJAX
-class AjaxPaginationSpider(scrapy.Spider):
-    """Para sites que carregam mais conteúdo via AJAX"""
-    
-    def parse_ajax_pagination(self, response):
-        # Interceptar requests AJAX
-        import json
-        
-        # Primeira página normal
-        yield from self.parse_static_listing(response)
-        
-        # Páginas AJAX subsequentes
-        ajax_url = "https://site.gov.br/api/proposicoes"
-        for page in range(2, 100):  # Ajustar limite
-            yield scrapy.Request(
-                f"{ajax_url}?page={page}",
-                callback=self.parse_ajax_response,
-                headers={'X-Requested-With': 'XMLHttpRequest'}
-            )
-    
-    def parse_ajax_response(self, response):
-        data = json.loads(response.text)
-        for item in data.get('items', []):
-            yield response.follow(item['url'], self.parse_proposicao)
-
-# TIPO 3: Sites Single Page Application (SPA)
-class SPASpider(scrapy.Spider):
-    """Para sites React/Vue/Angular"""
-    
-    def __init__(self):
-        # Requer Selenium ou Playwright
-        from selenium import webdriver
-        from selenium.webdriver.chrome.options import Options
-        
-        options = Options()
-        options.add_argument('--headless')
-        self.driver = webdriver.Chrome(options=options)
-    
-    def parse_spa_content(self, response):
-        self.driver.get(response.url)
-        
-        # Aguardar carregamento
-        WebDriverWait(self.driver, 10).until(
-            EC.presence_of_element_located((By.CLASS_NAME, "proposicao-item"))
-        )
-        
-        # Extrair links após JavaScript executar
-        elements = self.driver.find_elements(By.CSS_SELECTOR, "a.proposicao-link")
-        for element in elements:
-            url = element.get_attribute('href')
-            yield scrapy.Request(url, callback=self.parse_proposicao)
-    
-    def closed(self, reason):
-        self.driver.quit()
 ```
 
 ## 🏃‍♂️ Executando os Crawlers
@@ -544,12 +248,6 @@ scrapy list
 ```bash
 # Salvar em formato específico
 scrapy crawl proposicoessp -o output/sp_dados.json
-
-# Executar com log específico
-scrapy crawl proposicoessp -L INFO
-
-# Executar em modo debug
-scrapy crawl proposicoessp -L DEBUG
 
 # Limitar número de itens (para testes)
 scrapy crawl proposicoessp -s CLOSESPIDER_ITEMCOUNT=10
@@ -601,25 +299,6 @@ if match:
     print(f"Tipo: {match.group(1)}, Número: {match.group(2)}, Ano: {match.group(3)}")
 ```
 
-## 📤 Importando Dados para o Weaviate
-
-Após executar os crawlers, use o script de importação:
-
-```bash
-# Importar dados de um estado específico
-python importer.py output/proposicoessp_proposicoes.json
-
-# Importar com configurações específicas
-python importer.py output/proposicoessp_proposicoes.json --max-tokens 4000 --overlap 200
-```
-
-### Funcionalidades do Importer
-
-- **Chunking inteligente**: Divide textos longos em chunks baseados em tokens
-- **Deduplicação**: Evita importar dados duplicados usando UUIDs
-- **Progress bar**: Mostra progresso da importação
-- **Controle de tokens**: Configura tamanho máximo de chunks para embeddings
-
 ## 🔧 Configurações Avançadas
 
 ### Modificar Pipelines
@@ -633,62 +312,6 @@ ITEM_PIPELINES = {
 }
 ```
 
-### Adicionar Novos Pipelines
-
-Crie novos pipelines em `pipelines.py`:
-
-```python
-class CustomPipeline:
-    def process_item(self, item, spider):
-        # Sua lógica personalizada
-        return item
-```
-
-### Debug e Logs
-
-Configure logs em `settings.py`:
-
-```python
-# Nível de log
-LOG_LEVEL = 'INFO'  # DEBUG, INFO, WARNING, ERROR
-
-# Arquivo de log
-LOG_FILE = 'scrapy.log'
-```
-
-## 🧪 Testando Novos Spiders
-
-### 1. Teste Básico
-
-```bash
-# Teste seco (sem executar)
-scrapy check proposicoes[uf]
-
-# Teste com poucos itens
-scrapy crawl proposicoes[uf] -s CLOSESPIDER_ITEMCOUNT=10
-```
-
-### 2. Validação de Dados
-
-```bash
-# Verificar se JSON foi gerado
-ls -la output/
-
-# Validar estrutura do JSON
-python -m json.tool output/proposicoes[uf]_proposicoes.json
-```
-
-### 3. Debug de Items
-
-Adicione logs no seu spider:
-
-```python
-def parse(self, response):
-    for item in super().parse(response):
-        self.logger.info(f"Item processado: {item['title']}")
-        yield item
-```
-
 ## 📋 Checklist para Novo Estado
 
 ### Fase 1: Análise e Planejamento
@@ -700,8 +323,8 @@ def parse(self, response):
 - [ ] Testar seletores com `scrapy shell`
 
 ### Fase 2: Desenvolvimento
-- [ ] Criar arquivo `proposicoes[uf].py` no diretório `spiders/`
-- [ ] Definir `name`, `house`, `uf` e configurações básicas
+- [ ] Criar arquivo `proposicoes[casa].py` no diretório `spiders/`
+- [ ] Definir `name` , `house` e configurações básicas
 - [ ] Implementar `parse()` para listagem
 - [ ] Implementar `parse_proposicao()` para páginas individuais
 - [ ] Implementar extração de texto completo
@@ -720,12 +343,6 @@ def parse(self, response):
 - [ ] Verificar URLs públicas funcionais
 - [ ] Testar importação no Weaviate
 - [ ] Documentar peculiaridades do estado
-
-### Fase 5: Documentação
-- [ ] Documentar seletores específicos usados
-- [ ] Documentar estrutura particular do site
-- [ ] Documentar problemas encontrados e soluções
-- [ ] Atualizar README se necessário
 
 ## 🐛 Problemas Comuns
 
@@ -775,109 +392,6 @@ custom_settings = {
     'DOWNLOAD_DELAY': 3,
     'CONCURRENT_REQUESTS': 1
 }
-```
-
-### Problemas com PDFs
-
-**PDF corrompido ou protegido:**
-```python
-def extract_pdf_safely(pdf_url):
-    try:
-        import pdfplumber
-        response = requests.get(pdf_url)
-        with pdfplumber.open(BytesIO(response.content)) as pdf:
-            return "\n".join(page.extract_text() for page in pdf.pages)
-    except Exception as e:
-        # Fallback para OCR se necessário
-        self.logger.warning(f"PDF extraction failed: {e}")
-        return self.extract_pdf_with_ocr(pdf_url)
-```
-
-### Problemas de Validação
-
-**Campos obrigatórios faltando:**
-```python
-# Verificar no pipeline se campos essenciais existem
-def process_item(self, item, spider):
-    required_fields = ['title', 'house', 'url', 'full_text']
-    missing = [f for f in required_fields if not item.get(f)]
-    
-    if missing:
-        spider.logger.warning(f"Missing fields: {missing}")
-        # Decidir se descartar ou preencher com default
-        for field in missing:
-            item[field] = 'N/A'  # ou raise DropItem()
-    
-    return item
-```
-
-### Problemas de Memória
-
-**Spider consome muita memória:**
-```python
-# ✅ Processar itens em lotes menores
-custom_settings = {
-    'CONCURRENT_REQUESTS': 1,
-    'CLOSESPIDER_ITEMCOUNT': 1000,  # Parar após 1000 itens
-}
-
-# Ou usar generator para texto muito grande
-def extract_large_text(self, response):
-    for chunk in self.process_text_in_chunks(response):
-        yield chunk
-```
-
-## 🤝 Contribuindo
-
-1. Fork o projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/novo-estado`)
-3. Teste thoroughly o novo spider
-4. Commit suas mudanças (`git commit -am 'Add spider for XX state'`)
-5. Push para a branch (`git push origin feature/novo-estado`)
-6. Abra um Pull Request
-
-## 📝 Notas Importantes
-
-- **Dados sensíveis**: Nunca commite arquivos `.env` ou chaves de API
-- **Rate limiting**: Respeite os limites das APIs e sites (use `DOWNLOAD_DELAY`)
-- **Robots.txt**: Sempre verifique e respeite o arquivo robots.txt do site
-- **User-Agent**: Configure um User-Agent identificável e respeitoso
-- **Testes**: Sempre teste com poucos items antes de executar coleta completa
-- **URLs públicas**: Verifique se as URLs extraídas são acessíveis publicamente  
-- **Backup de dados**: Faça backup dos JSONs gerados antes de reprocessar
-- **Monitoramento**: Sites podem mudar estrutura - monitore falhas regularmente
-- **Legalidade**: Verifique se o crawling está em conformidade com os termos de uso
-- **Performance**: Use `CONCURRENT_REQUESTS` e `DOWNLOAD_DELAY` apropriados
-
-### Boas Práticas de Desenvolvimento
-
-```python
-# ✅ Sempre use try/catch para extração
-def extract_safely(self, response, selector, default=''):
-    try:
-        return response.css(selector).get('').strip()
-    except Exception as e:
-        self.logger.warning(f"Failed to extract {selector}: {e}")
-        return default
-
-# ✅ Valide dados antes de salvar
-def validate_item(self, item):
-    if not item.get('title'):
-        return False
-    if not item.get('full_text') or len(item['full_text']) < 100:
-        return False
-    return True
-
-# ✅ Use logs informativos
-def parse_proposicao(self, response):
-    self.logger.info(f"Processing: {response.url}")
-    item = self.extract_item(response)
-    
-    if self.validate_item(item):
-        self.logger.info(f"Extracted: {item['title']}")
-        yield item
-    else:
-        self.logger.warning(f"Invalid item from: {response.url}")
 ```
 
 ## 📚 Recursos Úteis

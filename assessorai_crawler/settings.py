@@ -65,9 +65,15 @@ ROBOTSTXT_OBEY = True
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 ITEM_PIPELINES = {
+    "assessorai_crawler.pipelines.ProposicaoFilesPipeline": 1,
+    "assessorai_crawler.pipelines.GeminiPDFExtractionPipeline": 2,
     "assessorai_crawler.pipelines.ValidationPipeline": 100,
     "assessorai_crawler.pipelines.JsonWriterSinglePipeline": 300,
 }
+
+# Configurações do FilesPipeline
+FILES_STORE = 'downloads'  # Pasta onde os arquivos serão salvos
+FILES_EXPIRES = 90  # Dias para expiração do cache de arquivos
 
 # Enable and configure the AutoThrottle extension (disabled by default)
 # See https://docs.scrapy.org/en/latest/topics/autothrottle.html

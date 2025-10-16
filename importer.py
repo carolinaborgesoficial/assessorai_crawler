@@ -10,9 +10,10 @@ from weaviate.classes.config import Configure
 from weaviate.classes.init import Auth
 from dotenv import load_dotenv
 from tqdm import tqdm
+
 load_dotenv()
 
-def chunk_text(text, max_tokens=3500, overlap_tokens=150, model="text-embedding-ada-002"):
+def chunk_text(text, max_tokens=3000, overlap_tokens=150, model="text-embedding-ada-002"):
     """Divide o texto em chunks baseados em tokens do modelo OpenAI."""
     try:
         encoding = tiktoken.encoding_for_model(model)
@@ -145,7 +146,7 @@ def main():
     #load config from .env
     config = {
         "weaviate_url": os.getenv("WEAVIATE_URL", ""),
-        "weaviate_apikey": os.getenv("WEAVIATE_APIKEY", ""),
+        "weaviate_apikey": os.getenv("WEAVIATE_API_KEY", ""),
         "class_name": os.getenv("WEAVIATE_CLASS", "Bill"),
         "openai_apikey": os.getenv("OPENAI_APIKEY", ""),
     }
@@ -156,7 +157,8 @@ def main():
     client = weaviate.connect_to_weaviate_cloud(
         cluster_url=config.get("weaviate_url"),
         auth_credentials=auth,
-        headers=headers
+        headers=headers,
+        additional_config=weaviate.config.AdditionalConfig(timeout=weaviate.config.Timeout(insert=300))
     )
     print(f"Conectado a Weaviate em {config.get('weaviate_url')}")
 

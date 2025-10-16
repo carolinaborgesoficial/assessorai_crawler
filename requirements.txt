@@ -5,3 +5,5 @@ tiktoken
 python-dotenv
 PyMuPDF
 html2text
+google-generativeai
+pillow
