@@ -72,7 +72,7 @@ ITEM_PIPELINES = {
 }
 
 # Configurações do FilesPipeline
-FILES_STORE = 'downloads'  # Pasta onde os arquivos serão salvos
+FILES_STORE = 'storage/downloads'  # Pasta onde os arquivos serão salvos
 FILES_EXPIRES = 90  # Dias para expiração do cache de arquivos
 
 # Enable and configure the AutoThrottle extension (disabled by default)
