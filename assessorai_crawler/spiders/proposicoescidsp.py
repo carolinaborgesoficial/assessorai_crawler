@@ -1,194 +1,231 @@
-# Arquivo: assessorai_crawler/spiders/proposicoescidsp.py
 import scrapy
 import hashlib
-import json 
+import json
 import re
-import io
-import fitz  # PyMuPDF
 from datetime import datetime
-from urllib.parse import urlencode 
+from urllib.parse import urlencode
+from bs4 import BeautifulSoup
 from ..items import ProposicaoItem
 
 class ProposicoescidspSpider(scrapy.Spider):
     """
-    Coleta proposições da Câmara Municipal de São Paulo, processando os PDFs associados.
+    Spider para coleta de proposições legislativas da Câmara Municipal de São Paulo.
+    Extrai dados da lista principal e detalhes de cada projeto.
     """
-    name = 'proposicoescidsp'
-    house = 'Câmara Municipal de São Paulo'
-    uf = 'SP'
-    slug = 'proposicoescidsp'
-    allowed_domains = ['splegisconsulta.saopaulo.sp.leg.br', 'splegispdarmazenamento.blob.core.windows.net']
-    ajax_url = 'https://splegisconsulta.saopaulo.sp.leg.br/Pesquisa/PageDataProjeto'
-    
-    # O spider usará as configurações de delay e concorrência do settings.py
-    
-    items_per_page_ajax = 100 # Busca em pacotes de 100 para eficiência
 
-    def __init__(self, limit=None, *args, **kwargs):
-        """
-        Permite limitar a coleta via linha de comando: -a limit=100
-        """
-        super(ProposicoescidspSpider, self).__init__(*args, **kwargs)
-        self.total_items_limit = int(limit) if limit else None
-        self.items_processed_count = 0
-        
-        if self.total_items_limit:
-            self.logger.info(f"Coleta limitada a {self.total_items_limit} itens.")
-        else:
-            self.logger.info("Coletando todos os itens encontrados.")
+    # --- 1. CONFIGURAÇÃO PADRÃO DO SCRAPY ---
+    name = 'proposicoescidsp'
+    allowed_domains = [
+        'splegisconsulta.saopaulo.sp.leg.br',
+        'splegispdarmazenamento.blob.core.windows.net'
+    ]
+
+    # --- 2. METADADOS DA CASA LEGISLATIVA ---
+    slug = 'proposicoescidsp'
+    casa_legislativa = 'Câmara Municipal de São Paulo'
+    uf = 'SP'
+    esfera = 'MUNICIPAL'
+    municipio = 'São Paulo'
+
+    # --- 3. URLs E PARÂMETROS DE COLETA ---
+    ajax_url = 'https://splegisconsulta.saopaulo.sp.leg.br/Pesquisa/PageDataProjeto'
+    detalhes_url_template = (
+        'https://splegisconsulta.saopaulo.sp.leg.br/Pesquisa/DetailsDetalhado'
+        '?COD_MTRA_LEGL=1&COD_PCSS_CMSP={codigo}&ANO_PCSS_CMSP={ano}'
+    )
+    items_por_page_ajax = 100
+
+    def __init__(self, data_inicio=None, data_fim=None, limite=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        # Validação de datas
+        self.data_inicio = self._validar_data(data_inicio)
+        self.data_fim = self._validar_data(data_fim)
+
+        # Validação de limite
+        try:
+            self.limite_total_itens = int(limite) if limite else None
+        except ValueError:
+            raise ValueError("O parâmetro 'limite' deve ser um número inteiro.")
+
+        self.itens_processados = 0
+
+        log_msg = f"🕷️ Iniciando coleta para {self.casa_legislativa}"
+        if self.data_inicio or self.data_fim:
+            log_msg += f" | Período: {self.data_inicio or '...'} a {self.data_fim or '...'}"
+        if self.limite_total_itens:
+            log_msg += f" | Limite: {self.limite_total_itens} itens"
+        self.logger.info(log_msg)
 
     def start_requests(self):
-        """ Inicia a coleta fazendo a primeira requisição para a API de listagem. """
-        params = {
-            'draw': '1', 'start': '0', 'length': str(self.items_per_page_ajax),
-            'tipo': '0', 'somenteEmTramitacao': 'false',
-            'order[0][column]': '1', 'order[0][dir]': 'desc',
-            'search[value]': '', 'search[regex]': 'false',
-        }
-        headers = {'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://splegisconsulta.saopaulo.sp.leg.br/Pesquisa/IndexProjeto'}
-        yield scrapy.FormRequest(url=self.ajax_url, formdata=params, headers=headers, callback=self.parse, meta={'params_template': params.copy()})
+        """Inicia a coleta via requisição AJAX."""
+        params = self._build_params(start=0)
+        headers = {'Referer': 'https://splegisconsulta.saopaulo.sp.leg.br/Pesquisa/IndexProjeto'}
+        yield scrapy.Request(
+            url=f"{self.ajax_url}?{urlencode(params)}",
+            headers=headers,
+            callback=self.parse,
+            meta={'params_template': params.copy()}
+        )
 
     def parse(self, response, **kwargs):
-        """ Processa a lista de proposições e dispara requisições para os PDFs. """
+        """Processa a lista de proposições e dispara requisições para detalhes."""
         data_json = json.loads(response.text)
         proposicoes_ajax = data_json.get('data', [])
 
         for ajax_data in proposicoes_ajax:
-            if self.total_items_limit and self.items_processed_count >= self.total_items_limit:
-                self.logger.info(f"Limite de {self.total_items_limit} itens atingido. Encerrando.")
+            if self.limite_total_itens and self.itens_processados >= self.limite_total_itens:
                 return
 
-            self.items_processed_count += 1
-            
-            # Cria um item parcial com os dados do JSON da lista
-            item = self.create_item_from_ajax(ajax_data, response)
+            item = self._create_item_from_ajax(ajax_data, response)
             if not item:
                 continue
 
-            # Dispara a requisição para o PDF, passando o item parcial
-            yield scrapy.Request(url=item['url'], callback=self.parse_pdf_content, errback=self.handle_pdf_error, meta={'item': item})
-        
-        # Lógica de Paginação: continua se não houver limite ou se ele não foi atingido
-        if not self.total_items_limit or self.items_processed_count < self.total_items_limit:
-            yield self.get_next_page_request(response, data_json)
+            self.itens_processados += 1
+            detalhes_url = self.detalhes_url_template.format(
+                codigo=item['numero_bruto'],
+                ano=item['ano_bruto']
+            )
+            yield scrapy.Request(
+                url=detalhes_url,
+                callback=self.parse_detalhes,
+                meta={'item': item}
+            )
 
-    def create_item_from_ajax(self, ajax_data, response):
-        """ Cria e preenche um item parcial com os dados da listagem AJAX. """
+        # Paginação
+        current_start = int(response.meta['params_template'].get('start', 0))
+        total_records = data_json.get('recordsFiltered', 0)
+        next_start = current_start + self.items_por_page_ajax
+
+        if next_start < total_records and (
+            not self.limite_total_itens or self.itens_processados < self.limite_total_itens
+        ):
+            next_params = self._build_params(
+                start=next_start,
+                draw=int(response.meta['params_template'].get('draw', 1)) + 1
+            )
+            yield scrapy.Request(
+                url=f"{self.ajax_url}?{urlencode(next_params)}",
+                headers=response.request.headers,
+                callback=self.parse,
+                meta={'params_template': next_params}
+            )
+
+    def _create_item_from_ajax(self, ajax_data, response):
+        """Cria item bruto a partir da resposta AJAX."""
         codigo_processo = ajax_data.get('codigo')
         if not codigo_processo:
             return None
 
         item = ProposicaoItem()
-        item['house'] = self.house
-        item['title'] = ajax_data.get('texto', '').strip()
-        item['type'] = ajax_data.get('sigla', '').strip()
-        item['number'] = ajax_data.get('numero')
-        item['year'] = ajax_data.get('ano')
-        item['author'] = [p.get('texto', '').strip() for p in ajax_data.get('promoventes', [])]
-        item['subject'] = ajax_data.get('ementa', '').strip()
-        item['scraped_at'] = datetime.now().isoformat()
-        item['meta'] = {'source_json_codigo': codigo_processo}
-        
-        pdf_link_template = "/ArquivoProcesso/GerarArquivoProcessoPorID/{codigo}?referidas=true" if ajax_data.get('natodigital') else "/ArquivoProcesso/GerarArquivoProcessoPorID/{codigo}?filtroAnexo=1"
-        item['url'] = response.urljoin(pdf_link_template.format(codigo=codigo_processo))
-        item['uuid'] = hashlib.md5(str(codigo_processo).encode('utf-8')).hexdigest()
+        item['uuid'] = hashlib.md5(str(codigo_processo).encode()).hexdigest()
+        item['casa_legislativa_bruto'] = self.casa_legislativa
+        item['titulo_bruto'] = ajax_data.get('texto', '').strip()
+        item['tipo_bruto'] = ajax_data.get('sigla', '').strip()
+        item['numero_bruto'] = ajax_data.get('numero')
+        item['ano_bruto'] = ajax_data.get('ano')
+        item['autores_bruto'] = [p.get('texto', '').strip() for p in ajax_data.get('promoventes', [])]
+        item['ementa_bruto'] = ajax_data.get('ementa', '').strip()
+        item['data_raspagem_bruto'] = datetime.now().isoformat()
+        item['meta_bruto'] = {'source_json_codigo': codigo_processo}
+        item['uf_bruto'] = self.uf
+        item['municipio_bruto'] = self.municipio
+        item['slug_bruto'] = self.slug
+
+        item['url_bruto'] = response.urljoin(
+            f"/ArquivoProcesso/GerarArquivoProcessoPorID/{codigo_processo}?filtroAnexo=1"
+        )
+        item['file_urls'] = [item['url_bruto']]
+        item['nome_arquivo_padronizado'] = f"{item['tipo_bruto']}_{item['numero_bruto']}_{item['ano_bruto']}"
         return item
 
-    def get_next_page_request(self, response, data_json):
-        """ Monta a requisição para a próxima página de resultados, se houver. """
-        records_filtered = data_json.get('recordsFiltered', 0)
-        current_start_offset = int(response.meta.get('params_template', {}).get('start', 0))
-        next_page_start_offset = current_start_offset + self.items_per_page_ajax
-
-        if next_page_start_offset < records_filtered:
-            params_template = response.meta.get('params_template')
-            next_params = params_template.copy()
-            next_params['draw'] = str(int(params_template.get('draw', 1)) + 1)
-            next_params['start'] = str(next_page_start_offset)
-            
-            self.logger.info(f"Buscando próxima página. Start: {next_page_start_offset}")
-            return scrapy.FormRequest(url=self.ajax_url, formdata=next_params, headers=response.request.headers, callback=self.parse, meta={'params_template': next_params})
-
-    def handle_pdf_error(self, failure):
-        """ Lida com falhas no download do PDF (timeout, 404, etc.). """
-        item = failure.request.meta['item']
-        self.logger.error(f"Falha ao baixar PDF para '{item['title']}'. URL: {item['url']}. Erro: {failure.value}")
-        item['full_text'] = "[PDF_NAO_LOCALIZADO]"
-        item['length'] = len(item['full_text'])
-        item['presentation_date'] = None
-        if item.is_complete():
-            yield item
-
-    def parse_pdf_content(self, response):
-        """ Processa o conteúdo do PDF baixado para extrair o texto e a data. """
+    def parse_detalhes(self, response):
+        """Extrai dados da página de detalhes da proposição."""
         item = response.meta['item']
-        try:
-            pdf_bytes = io.BytesIO(response.body)
-            pdf_document = fitz.open(stream=pdf_bytes, filetype="pdf")
-            texto_bruto = "".join([page.get_text("text") for page in pdf_document])
-            
-            if not texto_bruto.strip():
-                raise ValueError("PDF vazio ou sem texto extraível.")
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-            corpo_bruto, sucesso = self.extrair_corpo_lei(texto_bruto)
-            if sucesso:
-                texto_limpo = self.limpar_texto_pdf(corpo_bruto)
-                texto_formatado = self.formatar_texto_lei(texto_limpo)
-                item['full_text'] = texto_formatado[:2500]
-            else:
-                item['full_text'] = "[PDF_ILEGIVEL]"
-            
-            item['presentation_date'] = self.extrair_data_apresentacao(texto_bruto)
-        except Exception as e:
-            self.logger.error(f"Falha ao processar conteúdo do PDF para '{item['title']}': {e}")
-            item['full_text'] = "[PDF_ILEGIVEL]"
-            item['presentation_date'] = None
-        
-        item['length'] = len(item['full_text'])
-        if item.is_complete():
-            yield item
-        else:
-            self.logger.warning(f"Item '{item['title']}' incompleto. Campos faltando: {item.missing_fields()}. Item descartado.")
+        item['data_documento_bruto'] = self._extrair_data_documento(soup)
+        item['assuntos_bruto'] = self._extrair_assuntos(soup)
+        item['status_bruto'] = self._extrair_status(soup)
 
-    # --- Métodos Auxiliares de Processamento de Texto ---
-    def extrair_corpo_lei(self, texto_bruto):
-        """ Isola o corpo da lei, começando em 'Ementa:'. Retorna o texto e um booleano de sucesso. """
-        match_inicio = re.search(r"Ementa:", texto_bruto, flags=re.IGNORECASE)
-        if not match_inicio:
-            return "", False
-        start_index = match_inicio.start()
-        match_fim = re.search(r"Sala das Sessões", texto_bruto, flags=re.IGNORECASE)
-        if not match_fim:
-            return texto_bruto[start_index:].strip(), True
-        end_index = match_fim.start()
-        return texto_bruto[start_index:end_index].strip(), True
+        yield item
 
-    def limpar_texto_pdf(self, texto_para_limpar):
-        """ Remove lixo de OCR, cabeçalhos e rodapés do bloco de texto. """
-        texto_limpo = re.sub(r"^\s*Palácio Anchieta.*$", "", texto_para_limpar, flags=re.MULTILINE)
-        texto_limpo = re.sub(r"^\s*PROJETO DE LEI Nº?.*$", "", texto_limpo, flags=re.IGNORECASE | re.MULTILINE)
-        texto_limpo = re.sub(r"^_+$", "", texto_limpo, flags=re.MULTILINE)
-        texto_limpo = re.sub(r"Matéria PL .*? conferida em.*$", "", texto_limpo, flags=re.IGNORECASE | re.MULTILINE)
-        texto_limpo = re.sub(r"autuado por .*$", "", texto_limpo, flags=re.IGNORECASE | re.MULTILINE)
-        texto_limpo = re.sub(r"fls\.\s*\d+", "", texto_limpo, flags=re.IGNORECASE)
-        texto_limpo = re.sub(r"Impresso n[oó] .*? da CMSP", "", texto_limpo, flags=re.IGNORECASE)
-        texto_limpo = re.sub(r"[«»”'´`‘]", "", texto_limpo)
-        texto_limpo = re.sub(r"cod\.\s*\d+", "", texto_limpo, flags=re.IGNORECASE)
-        return texto_limpo.strip()
+    # --- MÉTODOS AUXILIARES DE EXTRAÇÃO ---
 
-    def extrair_data_apresentacao(self, texto_bruto):
-        """ Usa regex para encontrar a data de apresentação no texto bruto. """
-        match = re.search(r"Sala das Sessões,?\s*(\d{1,2}\s+de\s+\w+\s+de\s+\d{4})", texto_bruto, flags=re.IGNORECASE)
-        if match: return match.group(1).strip()
-        match = re.search(r"PROJETO DE LEI.*?DE\s+(\d{2}/\d{2}/\d{4})", texto_bruto, flags=re.IGNORECASE)
-        if match: return match.group(1)
-        match = re.search(r"autuado por .*? em\s+(\d{2}/\d{2}/\d{4})", texto_bruto, flags=re.IGNORECASE)
-        if match: return match.group(1)
+    def _extrair_data_documento(self, soup):
+        td = soup.find('td', class_='negrito', string=re.compile(r'\s*Apresentado em\s*'))
+        if td:
+            return td.find_next_sibling('td').get_text(strip=True)
         return None
 
-    def formatar_texto_lei(self, texto_bruto):
-        """ Formata o texto para uma única linha, sem quebras de linha. """
-        texto_corrigido = re.sub(r'-\n', '', texto_bruto)
-        texto_com_espacos = re.sub(r'\s*\n\s*', ' ', texto_corrigido)
-        texto_final = re.sub(r'\s{2,}', ' ', texto_com_espacos)
-        return texto_final.strip()
+    def _extrair_assuntos(self, soup):
+        legend = soup.find('legend', string='Palavras-Chave')
+        if legend:
+            spans = legend.find_parent('fieldset').find_all('span')
+            return [span.get_text(strip=True) for span in spans]
+        return []
+
+    def _extrair_status(self, soup):
+
+        legend = soup.find('legend', string=re.compile(r'Histórico.*Tramitações', re.IGNORECASE))
+        if not legend:
+            self.logger.warning("⚠️ Legend de tramitações não encontrado.")
+            return []
+
+        fieldset = legend.find_parent('fieldset')
+        tabela = fieldset.find('table') if fieldset else None
+        if not tabela:
+            self.logger.warning("⚠️ Tabela de tramitações não encontrada.")
+            return []
+
+        linhas = tabela.find_all('tr')[1:]  # Ignora cabeçalho
+        status_list = []
+
+        for tr in linhas[:3]:  # Pega até 3 últimas
+            cols = tr.find_all('td')
+            if len(cols) >= 2:
+                data = cols[0].get_text(strip=True)
+                descricao = cols[1].get_text(strip=True)
+                status_list.append({"data": data, "descricao": descricao})
+        return status_list
+
+    def _build_params(self, start=0, draw=1):
+        """Constrói os parâmetros da requisição AJAX."""
+        params = {
+            'draw': str(draw),
+            'start': str(start),
+            'length': str(self.items_por_page_ajax),
+            'tipo': '1',
+            'order[0][column]': '1',
+            'order[0][dir]': 'desc',
+            '_': int(datetime.now().timestamp() * 1000),
+            'columns[0][data]': '', 'columns[0][name]': '', 'columns[0][searchable]': 'false',
+            'columns[0][orderable]': 'false', 'columns[0][search][value]': '', 'columns[0][search][regex]': 'false',
+            'columns[1][data]': '1', 'columns[1][name]': 'PROJETO', 'columns[1][searchable]': 'true',
+            'columns[1][orderable]': 'true', 'columns[1][search][value]': '', 'columns[1][search][regex]': 'false',
+            'columns[2][data]': 'ementa', 'columns[2][name]': 'EMENTA', 'columns[2][searchable]': 'true',
+            'columns[2][orderable]': 'true', 'columns[2][search][value]': '', 'columns[2][search][regex]': 'false',
+            'columns[3][data]': 'norma', 'columns[3][name]': 'NORMA', 'columns[3][searchable]': 'true',
+            'columns[3][orderable]': 'true', 'columns[3][search][value]': '', 'columns[3][search][regex]': 'false',
+            'columns[4][data]': 'assuntos', 'columns[4][name]': 'PALAVRA', 'columns[4][searchable]': 'true',
+            'columns[4][orderable]': 'true', 'columns[4][search][value]': '', 'columns[4][search][regex]': 'false',
+            'columns[5][data]': 'promoventes', 'columns[5][name]': 'PROMOVENTE', 'columns[5][searchable]': 'true',
+            'columns[5][orderable]': 'true', 'columns[5][search][value]': '', 'columns[5][search][regex]': 'false',
+            'search[value]': '', 'search[regex]': 'false'
+        }
+
+        if self.data_inicio:
+            params['autuacaoI'] = self.data_inicio
+        if self.data_fim:
+            params['autuacaoF'] = self.data_fim
+
+        return params
+
+    def _validar_data(self, data_texto):
+        """Valida e formata uma data no formato YYYY-MM-DD."""
+        if not data_texto:
+            return None
+        try:
+            return datetime.strptime(data_texto.strip(), '%Y-%m-%d').strftime('%Y-%m-%d')
+        except ValueError:
+            raise ValueError(f"Formato de data inválido: '{data_texto}'. Use o formato YYYY-MM-DD.")

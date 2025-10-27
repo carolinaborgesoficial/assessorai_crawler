@@ -1,91 +1,142 @@
+# Arquivo: assessorai_crawler/pipelines.py
+
 import json
 import os
+import re
+from unidecode import unidecode
+from scrapy import Request
 from scrapy.exceptions import DropItem
 from scrapy.pipelines.files import FilesPipeline
-from scrapy import Request
-import google.generativeai as genai
-from dotenv import load_dotenv
-import hashlib
 from datetime import datetime
 
-load_dotenv()
-
-class JsonWriterPipeline:
-    def open_spider(self, spider):
-        self.output_dir = f'output/{spider.slug}'
-        os.makedirs(self.output_dir, exist_ok=True)
-
-    def process_item(self, item, spider):
-        filename = f"{item['uuid']}.json"
-        path = os.path.join(self.output_dir, filename)
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(dict(item), f, ensure_ascii=False, indent=2)
-        return item
-
-class JsonWriterSinglePipeline:
-    def open_spider(self, spider):
-        # Inicializa a lista de itens
-        self.items = []
-        # Garante pasta de saída
-        output_dir = f'output'
-        os.makedirs(output_dir, exist_ok=True)
-        self.file_path = os.path.join(output_dir, f'{spider.slug}_proposicoes.json')
+class PipelinePadronizacao:
+    """
+    Recebe o item bruto, padroniza os dados e gera os caminhos dos arquivos.
+    """
+    def _slugify(self, text):
+        """Converte um texto como "São Paulo" para "sao-paulo"."""
+        if not text: return ""
+        text = unidecode(str(text))
+        text = text.lower()
+        text = re.sub(r'[\s\W_]+', '-', text)
+        return text.strip('-')
 
     def process_item(self, item, spider):
-        # Coleta cada item para depois gravar em lote
-        self.items.append(dict(item))
-        return item
+        autores_final = []
+        for autor_raw in item.get('autores_bruto', []):
+            nome, partido = self._extrair_nome_partido(autor_raw)
+            autores_final.append({"nome": nome, "partido": partido})
 
-    def close_spider(self, spider):
-        # Grava todos os itens em um único JSON
-        with open(self.file_path, 'w', encoding='utf-8') as f:
-            json.dump(self.items, f, ensure_ascii=False, indent=2)
+        data_formatada = self._formatar_data(item.get('data_documento_bruto'))
+        
+        # --- LÓGICA CORRIGIDA DE CRIAÇÃO DE CAMINHOS ---
+        uf_slug = self._slugify(spider.uf)
+        municipio_slug = self._slugify(spider.municipio)
+        nome_arquivo = self._slugify(item.get('nome_arquivo_padronizado', 'arquivo-sem-nome'))
+        
+        caminho_base = f"{uf_slug}/{municipio_slug}/{spider.slug}/{nome_arquivo}"
+        caminho_pdf = f"{caminho_base}.pdf"
+        caminho_md = f"{caminho_base}.md"
 
-class ValidationPipeline:
-    """Valida itens antes de enviá-los ao pipeline de escrita"""
-    def process_item(self, item, spider):
-        # Verifica se o item implementa validação
-        missing = []
-        if hasattr(item, 'missing_fields'):
-            missing = item.missing_fields()
-        if missing:
-            spider.logger.warning(
-                f"Descartando item incompleto no pipeline (uuid={item.get('uuid')}), faltam: {missing}"
-            )
-            raise DropItem(f"Campos faltando: {missing}")
-        return item
+        item_padronizado = {
+            "localidade": {"esfera": spider.esfera, "municipio": spider.municipio, "estado": spider.uf},
+            "casa_legislativa": spider.casa_legislativa,
+            "tipo_documento": item.get('tipo_bruto'),
+            "numero_documento": str(item.get('numero_bruto')),
+            "data_documento": data_formatada,
+            "autores": autores_final,
+            "ementa": item.get('ementa_bruto'),
+            "assuntos": item.get('assuntos_bruto', []),
+            "status_tramitacao": [
+                {
+                    "descricao": s.get("descricao"),
+                    "data": self._formatar_data(s.get("data"))
+                }
+                for s in item.get('status_bruto', [])
+            ],
+            "url_documento_original": item.get('url_bruto'),
+            "caminho_arquivo_original": caminho_pdf,
+            "caminho_arquivo_texto": caminho_md,
+            "data_raspagem": item.get('data_raspagem_bruto')
+        }
+        
+        return {'item_bruto': item, 'item_padronizado': item_padronizado}
+
+    def _extrair_nome_partido(self, texto_autor):
+        match = re.search(r'\((.*?)\)', texto_autor)
+        if match:
+            partido = match.group(1).strip().upper()
+            nome = re.sub(r'^\s*Ver\.\s*', '', texto_autor).replace(f"({match.group(1)})", "").strip()
+            return nome, partido
+        return texto_autor.strip(), None
+
+    def _formatar_data(self, data_texto):
+        if not data_texto:
+            return None
+        try:
+            return datetime.strptime(data_texto.strip(), '%d/%m/%Y %H:%M:%S').strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+        try:
+            return datetime.strptime(data_texto.strip(), '%d/%m/%Y %H:%M').strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+        try:
+            return datetime.strptime(data_texto.strip(), '%d/%m/%Y').strftime('%Y-%m-%d')
+        except ValueError:
+            pass
+        match = re.search(r'(\d{1,2})\s+de\s+(\w+)\s+de\s+(\d{4})', data_texto, re.IGNORECASE)
+        if match:
+            dia, mes_nome, ano = match.groups()
+            meses = {
+                'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+                'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+                'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+            }
+            mes = meses.get(mes_nome.lower())
+            if mes:
+                return f"{ano}-{mes}-{int(dia):02d}"
+        return data_texto
 
 
 class ProposicaoFilesPipeline(FilesPipeline):
-    """Pipeline customizado para baixar arquivos de proposições"""
-    
     def get_media_requests(self, item, info):
-        """Baixa todos os arquivos listados em file_urls"""
-        urls = item.get('file_urls', [])
+        item_bruto = item['item_bruto']
+        urls = item_bruto.get('file_urls', [])
         for url in urls:
-            yield Request(url)
+            yield Request(url, meta={'item': item})
     
     def file_path(self, request, response=None, info=None, *, item=None):
-        """Define o caminho onde o arquivo será salvo"""
-        # Criar estrutura de pastas: files/{spider_name}/{year}/{number}/
-        spider_name = info.spider.name
-        year = item.get('year', 'unknown')
-        number = item.get('number', 'unknown')
-        
-        # Extrair nome do arquivo da URL
-        url_hash = hashlib.md5(request.url.encode()).hexdigest()
-        ext = os.path.splitext(request.url)[1] or '.pdf'
-        filename = f"{number}_{year}_{url_hash}{ext}"
-        
-        return f"{spider_name}/{year}/{filename}"
-    
-    def item_completed(self, results, item, info):
-        """Adiciona informações dos arquivos baixados ao item"""
-        file_paths = [x['path'] for ok, x in results if ok]
-        if file_paths:
-            item['files'] = file_paths
+        item_padronizado = item['item_padronizado']
+        return item_padronizado.get('caminho_arquivo_original')
+
+class JsonWriterSinglePipeline:
+    """Salva cada item padronizado como uma linha em um arquivo .jl."""
+    def open_spider(self, spider):
+        output_dir = f'output'
+        os.makedirs(output_dir, exist_ok=True)
+        file_path = os.path.join(output_dir, f'{spider.slug}_proposicoes.jl')
+        self.file = open(file_path, 'w', encoding='utf-8')
+
+    def process_item(self, item, spider):
+        item_padronizado = item['item_padronizado']
+        # --- CORREÇÃO AQUI: Escreve uma única linha, sem indentação ---
+        line = json.dumps(dict(item_padronizado), ensure_ascii=False) + "\n"
+        self.file.write(line)
         return item
 
+    def close_spider(self, spider):
+        self.file.close()
+
+class ValidationPipeline:
+    """Valida se o spider coletou os dados brutos mínimos necessários."""
+    def process_item(self, item, spider):
+        item_bruto = item['item_bruto']
+        if hasattr(item_bruto, 'missing_fields'):
+            missing = item_bruto.missing_fields()
+            if missing:
+                raise DropItem(f"Item bruto descartado, campos faltando: {missing}")
+        return item
 
 class GeminiPDFExtractionPipeline:
     """Pipeline que usa Google Gemini para extrair texto de PDFs"""
@@ -163,3 +214,4 @@ Organize o texto de forma clara e estruturada.
             item['length'] = 0
         
         return item
+
