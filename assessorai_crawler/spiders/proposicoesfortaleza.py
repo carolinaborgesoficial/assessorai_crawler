@@ -29,21 +29,34 @@ class ProposicoesFortalezaSpider(scrapy.Spider):
 
     # --- 3. TIPOS DE DOCUMENTO A COLETAR ---
     TIPOS_DOCUMENTO = {
-        #6: "Projeto de Decreto Legislativo",
-        #9: "Projeto de Emenda à Lei Orgânica",
-        #5: "Projeto de Lei Complementar",
         1: "Projeto de Lei Ordinária",
+        # outros tipos podem ser adicionados aqui
     }
 
+    # --- INIT PADRONIZADO ---
     def __init__(self, data_inicio=None, data_fim=None, limite=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Validação de datas
         self.data_inicio = self._validar_data(data_inicio)
         self.data_fim = self._validar_data(data_fim)
+
+        # Validação de limite
         try:
             self.limite_total_itens = int(limite) if limite else None
         except ValueError:
             raise ValueError("O parâmetro 'limite' deve ser um número inteiro.")
+
+        # Contador de itens processados
         self.itens_processados = 0
+
+        # Log padronizado
+        log_msg = f"🕷️ Iniciando coleta para {self.casa_legislativa}"
+        if self.data_inicio or self.data_fim:
+            log_msg += f" | Período: {self.data_inicio or '...'} a {self.data_fim or '...'}"
+        if self.limite_total_itens:
+            log_msg += f" | Limite: {self.limite_total_itens} itens"
+        self.logger.info(log_msg)
 
     def start_requests(self):
         base_url = "https://sapl.fortaleza.ce.leg.br/materia/pesquisar-materia"
@@ -66,7 +79,6 @@ class ProposicoesFortalezaSpider(scrapy.Spider):
             if self.data_fim and data_obj and data_obj > datetime.strptime(self.data_fim, '%Y-%m-%d'):
                 continue
 
-
             item = self._create_item_from_lista(linha, response, data_str)
             if item:
                 self.itens_processados += 1
@@ -78,7 +90,6 @@ class ProposicoesFortalezaSpider(scrapy.Spider):
         next_page_link = response.css('a.page-link:contains("Próxima")::attr(href)').get()
         if next_page_link:
             yield response.follow(next_page_link, callback=self.parse)
-
 
     def _create_item_from_lista(self, linha, response, data_str):
         item = ProposicaoItem()
@@ -112,6 +123,13 @@ class ProposicoesFortalezaSpider(scrapy.Spider):
             item['url_bruto'] = response.urljoin(pdf_url)
             item['file_urls'] = [item['url_bruto']]
             item['nome_arquivo_padronizado'] = f"{item.get('tipo_bruto', 'doc').replace(' ', '-')}_{item.get('numero_bruto', 's_n')}_{item.get('ano_bruto', 's_a')}"
+            item['caminho_arquivo_original'] = (
+                    f"{self.uf.lower()}/"
+                    f"{self.municipio.lower().replace(' ', '-')}/"
+                    f"{self.slug}/"
+                    f"{item['nome_arquivo_padronizado']}.pdf"
+            )
+            item['url_documento_original'] = item['url_bruto']
 
         item['casa_legislativa_bruto'] = self.casa_legislativa
         item['data_raspagem_bruto'] = datetime.now().isoformat()
@@ -124,6 +142,7 @@ class ProposicoesFortalezaSpider(scrapy.Spider):
         return item
 
     def _validar_data(self, data_texto):
+        """Valida e formata uma data no formato YYYY-MM-DD."""
         if not data_texto:
             return None
         try:

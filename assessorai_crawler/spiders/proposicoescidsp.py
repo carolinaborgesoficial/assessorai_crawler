@@ -35,6 +35,7 @@ class ProposicoescidspSpider(scrapy.Spider):
     )
     items_por_page_ajax = 100
 
+    # --- INIT PADRONIZADO ---
     def __init__(self, data_inicio=None, data_fim=None, limite=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
 
@@ -48,8 +49,10 @@ class ProposicoescidspSpider(scrapy.Spider):
         except ValueError:
             raise ValueError("O parâmetro 'limite' deve ser um número inteiro.")
 
+        # Contador de itens processados
         self.itens_processados = 0
 
+        # Log padronizado
         log_msg = f"🕷️ Iniciando coleta para {self.casa_legislativa}"
         if self.data_inicio or self.data_fim:
             log_msg += f" | Período: {self.data_inicio or '...'} a {self.data_fim or '...'}"
@@ -144,13 +147,43 @@ class ProposicoescidspSpider(scrapy.Spider):
         item = response.meta['item']
         soup = BeautifulSoup(response.text, 'html.parser')
 
+        # Data
         item['data_documento_bruto'] = self._extrair_data_documento(soup)
-        item['assuntos_bruto'] = self._extrair_assuntos(soup)
-        item['status_bruto'] = self._extrair_status(soup)
+
+        # Assuntos
+        assuntos_bruto = self._extrair_assuntos(soup)
+        item['assuntos_bruto'] = assuntos_bruto
+
+        # Status
+        status_bruto = self._extrair_status(soup)
+        item['status_bruto'] = status_bruto
+
+        # PDF
+        url_pdf = self._extrair_pdf(soup, response)
+        if url_pdf:
+            item['url_documento_original'] = url_pdf
+            item['file_urls'] = [url_pdf]
+            #self.logger.info(f"[DETALHE] PDF do processo encontrado: {url_pdf}")
+        else:
+            # não achou PDF → deixa sem
+            item['url_documento_original'] = None
+            item['file_urls'] = []
+            #self.logger.info("[DETALHE] Nenhum PDF encontrado para este projeto.")
 
         yield item
 
     # --- MÉTODOS AUXILIARES DE EXTRAÇÃO ---
+    def _extrair_pdf(self, soup, response):
+        # procura o fieldset do processo digital principal
+        legend = soup.find('legend', string=re.compile(r'Processo Digital - Processo Principal', re.IGNORECASE))
+        if legend:
+            fieldset = legend.find_parent('fieldset')
+            if fieldset:
+                # pega o primeiro link dentro da coluna Documento
+                link = fieldset.find('a', href=True)
+                if link:
+                    return response.urljoin(link['href'])
+        return None
 
     def _extrair_data_documento(self, soup):
         td = soup.find('td', class_='negrito', string=re.compile(r'\s*Apresentado em\s*'))
@@ -166,16 +199,15 @@ class ProposicoescidspSpider(scrapy.Spider):
         return []
 
     def _extrair_status(self, soup):
-
         legend = soup.find('legend', string=re.compile(r'Histórico.*Tramitações', re.IGNORECASE))
         if not legend:
-            self.logger.warning("⚠️ Legend de tramitações não encontrado.")
+            #self.logger.info("Historico de tramitações não encontrado.")
             return []
 
         fieldset = legend.find_parent('fieldset')
         tabela = fieldset.find('table') if fieldset else None
         if not tabela:
-            self.logger.warning("⚠️ Tabela de tramitações não encontrada.")
+            #self.logger.info("Tabela de tramitações não encontrada.")
             return []
 
         linhas = tabela.find_all('tr')[1:]  # Ignora cabeçalho

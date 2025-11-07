@@ -18,30 +18,34 @@ class ProposicoesSJCSpider(scrapy.Spider):
     # --- CONFIGURAÇÕES DE COLETA ---
     allowed_domains = ['camarasempapel.camarasjc.sp.gov.br']
     start_urls = ["https://camarasempapel.camarasjc.sp.gov.br/spl/consulta-producao.aspx?tipo=348"]
-    
+
     custom_settings = {
-    'ROBOTSTXT_OBEY': False
+        'ROBOTSTXT_OBEY': False
     }
 
+    # --- INIT PADRONIZADO ---
     def __init__(self, data_inicio=None, data_fim=None, limite=None, *args, **kwargs):
-        super(ProposicoesSJCSpider, self).__init__(*args, **kwargs)
-        self.limite_total_itens = int(limite) if limite else None
+        super().__init__(*args, **kwargs)
+
+        self.data_inicio = self._validar_data(data_inicio)
+        self.data_fim = self._validar_data(data_fim)
+
+        try:
+            self.limite_total_itens = int(limite) if limite else None
+        except ValueError:
+            raise ValueError("O parâmetro 'limite' deve ser um número inteiro.")
+
         self.itens_processados = 0
-        self.data_inicio = datetime.strptime(data_inicio, '%Y-%m-%d') if data_inicio else None
-        self.data_fim = datetime.strptime(data_fim, '%Y-%m-%d') if data_fim else None
-        
-        log_mensagem = f"Iniciando coleta para {self.casa_legislativa}."
+
+        log_msg = f"🕷️ Iniciando coleta para {self.casa_legislativa}"
         if self.data_inicio or self.data_fim:
-            log_mensagem += f" Período de {data_inicio or '...'} a {data_fim or '...'}"
+            log_msg += f" | Período: {self.data_inicio or '...'} a {self.data_fim or '...'}"
         if self.limite_total_itens:
-            log_mensagem += f" (Limite de {limite} itens)."
-        self.logger.info(log_mensagem)
+            log_msg += f" | Limite: {self.limite_total_itens} itens"
+        self.logger.info(log_msg)
 
     def parse(self, response):
-        """ 
-        Processa a página de listagem, filtra por data, segue para os detalhes
-        e usa a lógica de paginação por FormRequest.
-        """
+        """Processa a página de listagem, filtra por data e segue para os detalhes."""
         proposicoes = response.css("div.kt-widget5__item")
         continuar_paginando = True
 
@@ -50,19 +54,43 @@ class ProposicoesSJCSpider(scrapy.Spider):
                 self.logger.info(f"Limite de {self.limite_total_itens} itens atingido.")
                 return
 
-            data_str = prop.css("span.kt-font-info:contains('Data:') + span.kt-font-info::text").get('').strip()
+            # --- Data da listagem ---
+            data_str = prop.css("span.kt-font-info:contains('Data:') + span.kt-font-info::text").get('') or ''
+            data_str = data_str.strip()
+            data_obj = None
             if data_str:
-                try:
-                    data_obj = datetime.strptime(data_str, '%d/%m/%Y')
-                    if self.data_inicio and data_obj < self.data_inicio:
-                        self.logger.info(f"Item com data {data_str} é anterior a {self.data_inicio}. Parando a paginação.")
+                for fmt in ('%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d/%m/%Y'):
+                    try:
+                        data_obj = datetime.strptime(data_str, fmt)
+                        break
+                    except ValueError:
+                        continue
+
+            # --- Ano como fallback ---
+            titulo = prop.css("a.kt-widget5__title::text").get('') or ''
+            ano_match = re.search(r'/(\d{4})', titulo)
+            ano_int = int(ano_match.group(1)) if ano_match else None
+
+            # --- Filtro de intervalo ---
+            if self.data_inicio or self.data_fim:
+                di = datetime.strptime(self.data_inicio, '%Y-%m-%d') if self.data_inicio else None
+                df = datetime.strptime(self.data_fim, '%Y-%m-%d') if self.data_fim else None
+
+                if data_obj:
+                    if di and data_obj < di:
+                        self.logger.info(f"Item {titulo} com data {data_str} é anterior a {self.data_inicio}. Parando paginação.")
                         continuar_paginando = False
                         break
-                    if self.data_fim and data_obj > self.data_fim:
+                    if df and data_obj > df:
                         continue
-                except ValueError:
-                    pass
-            
+                elif ano_int:
+                    if di and ano_int < di.year:
+                        self.logger.info(f"Item {titulo} ano {ano_int} < {di.year}. Parando paginação.")
+                        continuar_paginando = False
+                        break
+                    if df and ano_int > df.year:
+                        continue
+
             item = self._criar_item_da_lista(prop, response)
             if not item:
                 continue
@@ -72,10 +100,11 @@ class ProposicoesSJCSpider(scrapy.Spider):
                 self.itens_processados += 1
                 yield response.follow(link_detalhes, callback=self.parse_detalhes, meta={'item': item})
 
+        # --- Paginação ---
         if continuar_paginando:
             next_page_button = response.css('a#ContentPlaceHolder1_lbNext[href]')
             if next_page_button:
-                self.logger.info("Navegando para a próxima página...")
+                self.logger.info("➡️ Paginação: indo para próxima página...")
                 form_data = {
                     '__EVENTTARGET': 'ctl00$ContentPlaceHolder1$lbNext',
                     '__EVENTARGUMENT': '',
@@ -86,10 +115,11 @@ class ProposicoesSJCSpider(scrapy.Spider):
                 yield scrapy.FormRequest(url=response.url, formdata=form_data, callback=self.parse)
 
     def _criar_item_da_lista(self, prop, response):
-        """ Cria o item bruto inicial a partir do elemento da lista. """
+        """Cria o item bruto inicial a partir da listagem."""
         item = ProposicaoItem()
         titulo_tag = prop.css("a.kt-widget5__title")
-        if not titulo_tag: return None
+        if not titulo_tag:
+            return None
         
         item['titulo_bruto'] = titulo_tag.css('::text').get('').strip()
         match = re.search(r'^(.*?)\s+n°\s+(\d+)/(\d{4})', item['titulo_bruto'], re.IGNORECASE)
@@ -113,17 +143,38 @@ class ProposicoesSJCSpider(scrapy.Spider):
         return item
 
     def parse_detalhes(self, response):
-        """ Extrai dados da página de detalhes e segue para a página de peças. """
+        """Extrai dados da página de detalhes, aplica filtro de data e segue para peças."""
         item = response.meta['item']
-        
-        item['data_documento_bruto'] = response.css('#ContentPlaceHolder1_sp_data_apresentacao::text').get('').strip()
+
+        data_str = response.css('#ContentPlaceHolder1_sp_data_apresentacao::text').get('') or ''
+        data_str = data_str.strip()
+        item['data_documento_bruto'] = data_str
+
+        # Converte a data oficial
+        data_obj = None
+        if data_str:
+            for fmt in ('%d/%m/%Y %H:%M:%S', '%d/%m/%Y %H:%M', '%d/%m/%Y'):
+                try:
+                    data_obj = datetime.strptime(data_str, fmt)
+                    break
+                except ValueError:
+                    continue
+
+        # Filtro final
+        if data_obj and (self.data_inicio or self.data_fim):
+            di = datetime.strptime(self.data_inicio, '%Y-%m-%d') if self.data_inicio else None
+            df = datetime.strptime(self.data_fim, '%Y-%m-%d') if self.data_fim else None
+
+            if di and data_obj < di:
+                self.logger.info(f"Descartando por data: {data_str} < {self.data_inicio} ({item.get('titulo_bruto')})")
+                return
+            if df and data_obj > df:
+                self.logger.info(f"Descartando por data: {data_str} > {self.data_fim} ({item.get('titulo_bruto')})")
+                return
+
         item['assuntos_bruto'] = response.css('#ContentPlaceHolder1_div_palavra_chave_exibicao p::text').getall()
-        
         descricao_status = response.css('#ContentPlaceHolder1_p_situacao::text').get()
-        if descricao_status:
-            item['status_bruto'] = [{"descricao": descricao_status.strip(), "data": None}]
-        else:
-            item['status_bruto'] = []
+        item['status_bruto'] = [{"descricao": descricao_status.strip(), "data": None}] if descricao_status else []
 
         link_pecas = response.css('#ContentPlaceHolder1_btn_arvore_arquivos::attr(href)').get()
         if link_pecas:
@@ -133,7 +184,7 @@ class ProposicoesSJCSpider(scrapy.Spider):
             yield item
 
     def parse_pecas(self, response):
-        """ Encontra o link final do PDF e entrega o item completo. """
+        """Encontra o link final do PDF e entrega o item completo."""
         item = response.meta['item']
         pdf_link = response.css('a[href$=".pdf"]::attr(href)').get()
         
@@ -144,3 +195,12 @@ class ProposicoesSJCSpider(scrapy.Spider):
             item['nome_arquivo_padronizado'] = nome_arquivo
         
         yield item
+
+    def _validar_data(self, data_texto):
+        """Valida e formata uma data no formato YYYY-MM-DD."""
+        if not data_texto:
+            return None
+        try:
+            return datetime.strptime(data_texto.strip(), '%Y-%m-%d').strftime('%Y-%m-%d')
+        except ValueError:
+            raise ValueError(f"Formato de data inválido: '{data_texto}'. Use o formato YYYY-MM-DD.")

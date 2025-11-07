@@ -29,6 +29,10 @@ class ProposicaoItem(scrapy.Item):
     slug_bruto = scrapy.Field()
     data_documento_bruto = scrapy.Field()
     assuntos_bruto = scrapy.Field()
+    conteudo_markdown = scrapy.Field()
+    url_documento_original = scrapy.Field()
+    caminho_arquivo_original = scrapy.Field()
+    caminho_arquivo_texto = scrapy.Field()
 
     def missing_fields(self):
         """

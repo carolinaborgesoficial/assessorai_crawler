@@ -7,6 +7,13 @@
 #     https://docs.scrapy.org/en/latest/topics/downloader-middleware.html
 #     https://docs.scrapy.org/en/latest/topics/spider-middleware.html
 
+
+import os
+from dotenv import load_dotenv
+
+# Carrega variáveis do arquivo .env para o ambiente
+load_dotenv()
+
 BOT_NAME = "assessorai_crawler"
 
 SPIDER_MODULES = ["assessorai_crawler.spiders"]
@@ -65,10 +72,12 @@ ROBOTSTXT_OBEY = True
 # Configure item pipelines
 # See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
 ITEM_PIPELINES = {
-    "assessorai_crawler.pipelines.ProposicaoFilesPipeline": 200,
-    #"assessorai_crawler.pipelines.GeminiPDFExtractionPipeline": 2,
     'assessorai_crawler.pipelines.PipelinePadronizacao': 100,
-    "assessorai_crawler.pipelines.JsonWriterSinglePipeline": 300,
+    'assessorai_crawler.pipelines.ProposicaoFilesPipeline': 200,
+    'assessorai_crawler.pipelines.SalvarMarkdownPipeline': 250,
+    'assessorai_crawler.pipelines.GeminiAssuntosPipeline': 280,   
+    'assessorai_crawler.pipelines.JsonWriterSinglePipeline': 300,
+    #'assessorai_crawler.pipelines.GeminiPDFExtractionPipeline': 500,
 }
 
 # Configurações do FilesPipeline
