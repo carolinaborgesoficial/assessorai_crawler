@@ -90,6 +90,19 @@ class ProposicoesCIDRJSpider(scrapy.Spider):
             self.itens_processados += 1
             yield scrapy.Request(url_detalhes, callback=self.parse_detalhes, meta={"item": item})
 
+        match = re.search(r"Start=(\d+)", response.url)
+        if match:
+            start_val = int(match.group(1))
+        else:
+            start_val = 0
+
+        next_start = start_val + 100
+        next_url = f"https://aplicnt.camara.rj.gov.br/APL/Legislativos/scpro.nsf/Internet/LeiInt?OpenForm&Start={next_start}"
+
+        # Só continua se ainda houver linhas (evita loop infinito)
+        if linhas:
+            yield scrapy.Request(next_url, callback=self.parse)
+
     def parse_detalhes(self, response):
         item = response.meta["item"]
         soup = BeautifulSoup(response.text, "html.parser")

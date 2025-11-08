@@ -172,7 +172,7 @@ class GeminiPDFExtractionPipeline:
         if not api_key:
             raise ValueError("GEMINI_API_KEY não encontrada no arquivo .env")
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-1.5-flash')
+        self.model = genai.GenerativeModel('gemini-2.5-pro')
         
         # Prompt para extração de texto legislativo
         self.extraction_prompt = """
