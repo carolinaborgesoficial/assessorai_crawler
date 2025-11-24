@@ -20,11 +20,14 @@ class SpSaoPauloSpider(scrapy.Spider):
     
     items_per_page_ajax = 100 # Busca em pacotes de 100 para eficiência
 
-    def __init__(self, limit=None, *args, **kwargs):
+
+    def __init__(self, data_inicio=None, data_fim=None, limit=None, *args, **kwargs):
         """
         Permite limitar a coleta via linha de comando: -a limit=100
         """
         super(SpSaoPauloSpider, self).__init__(*args, **kwargs)
+        self.data_inicio = data_inicio
+        self.data_fim = data_fim
         self.total_items_limit = int(limit) if limit else None
         self.items_processed_count = 0
         
@@ -37,12 +40,18 @@ class SpSaoPauloSpider(scrapy.Spider):
         """ Inicia a coleta fazendo a primeira requisição para a API de listagem. """
         params = {
             'draw': '1', 'start': '0', 'length': str(self.items_per_page_ajax),
-            'tipo': '0', 'somenteEmTramitacao': 'false',
+            'tipo': '1', 'somenteEmTramitacao': 'false',
             'order[0][column]': '1', 'order[0][dir]': 'desc',
             'search[value]': '', 'search[regex]': 'false',
         }
+        if self.data_inicio:
+            params['autuacaoI'] = self.data_inicio
+        if self.data_fim:
+            params['autuacaoF'] = self.data_fim
+
         headers = {'X-Requested-With': 'XMLHttpRequest', 'Referer': 'https://splegisconsulta.saopaulo.sp.leg.br/Pesquisa/IndexProjeto'}
         yield scrapy.FormRequest(url=self.ajax_url, formdata=params, headers=headers, callback=self.parse, meta={'params_template': params.copy()})
+
 
     def parse(self, response, **kwargs):
         """ Processa a lista de proposições e dispara requisições para os PDFs. """
@@ -111,5 +120,3 @@ class SpSaoPauloSpider(scrapy.Spider):
             
             self.logger.info(f"Buscando próxima página. Start: {next_page_start_offset}")
             return scrapy.FormRequest(url=self.ajax_url, formdata=next_params, headers=response.request.headers, callback=self.parse, meta={'params_template': next_params})
-
-
