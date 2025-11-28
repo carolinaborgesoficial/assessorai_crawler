@@ -12,3 +12,5 @@ textual
 scrapyd
 scrapydweb @ git+https://github.com/my8100/scrapydweb.git
 logparser
+
+beautifulsoup4

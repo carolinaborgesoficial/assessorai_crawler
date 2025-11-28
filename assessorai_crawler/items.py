@@ -20,7 +20,8 @@ class ProposicaoItem(scrapy.Item):
     project_url = scrapy.Field()  # URL da página de detalhes do projeto
     full_text = scrapy.Field()  # Texto completo da proposição
     length = scrapy.Field()  # Comprimento do texto
-
+    status = scrapy.Field() 
+    
     def missing_fields(self):
         """Retorna lista de campos obrigatórios que estão vazios ou None"""
         required = [
