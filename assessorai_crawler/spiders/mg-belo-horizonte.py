@@ -165,6 +165,8 @@ class MgBeloHorizonteSpider(scrapy.Spider):
 
         # Extrair de <p>
         ps = li.css('p')
+        status_list = []
+        
         for p in ps:
             text = p.xpath('string(.)').get().strip()
             if 'Autoria:' in text:
@@ -175,6 +177,13 @@ class MgBeloHorizonteSpider(scrapy.Spider):
                 item['subject'] = [s.strip() for s in text.replace('Assunto:', '').strip().split(',') if s.strip()]
             elif 'Data de apresentação:' in text:
                 item['presentation_date'] = text.replace('Data de apresentação:', '').strip()
+            elif text.startswith('Situação:'):
+                status_list.append({"descricao": text, "data": None})
+            elif text.startswith('Fase Atual:'):
+                status_list.append({"descricao": text, "data": None})
+
+        if status_list:
+            item['status'] = status_list
 
         # PDF URL
         pdf_links = li.css('a[title*="Baixar texto inicial"]::attr(href)').get()
