@@ -30,10 +30,11 @@ class BaseSaplSpider(scrapy.Spider):
         'DOWNLOAD_DELAY': 1,
     }
 
+
     def __init__(self, ano=None, tipo=None, max_pages=None, reset=None, test_mode=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.ano = ano
-        self.tipo = tipo or self.default_tipo
+        self.tipo = tipo  # não usa mais default_tipo
         self.max_pages = int(max_pages) if max_pages is not None else None
         self.reset = reset
         self.test_mode = test_mode
@@ -120,7 +121,11 @@ class BaseSaplSpider(scrapy.Spider):
             item['type'] = None
 
         item['subject'] = linha_selector.css('div.dont-break-out::text').get('').strip()
-        item['presentation_date'] = linha_selector.xpath("string(.//strong[contains(text(), 'Apresentação:')]/following-sibling::text()[1])").get('').strip()
+
+        #padronização da data
+        raw_date = linha_selector.xpath("string(.//strong[contains(text(), 'Apresentação:')]/following-sibling::text()[1])").get('').strip()
+        item['presentation_date'] = self._formatar_data(raw_date)
+       
         item['author'] = [linha_selector.xpath("string(.//strong[contains(text(), 'Autor:')]/following-sibling::text()[1])").get('').strip()]
 
         pdf_relative_url = linha_selector.css('a:contains("Texto Original")::attr(href)').get()
@@ -137,4 +142,52 @@ class BaseSaplSpider(scrapy.Spider):
         normalized_type = item['type'].lower().replace(' ', '-').replace('à', 'a') if item['type'] else 'unknown'
         item['md_files'] = f"{self.uf}/{self.slug}/{normalized_type}-{item['number']}-{item['year']}.md"
 
+        #status
+        status_list = []
+
+        localizacao = linha_selector.xpath("string(.//strong[contains(text(), 'Localização Atual:')]/following-sibling::text()[1])").get()
+        if localizacao:
+            status_list.append({"descricao": f"Localização Atual: {localizacao.strip()}", "data": None})
+
+        status = linha_selector.xpath("string(.//strong[contains(text(), 'Status:')]/following-sibling::text()[1])").get()
+        if status:
+            status_list.append({"descricao": f"Status: {status.strip()}", "data": None})
+
+        data_tramitacao = linha_selector.xpath("string(.//strong[contains(text(), 'Data da última Tramitação:')]/following-sibling::text()[1])").get()
+        if data_tramitacao:
+            status_list.append({"descricao": "Data da última Tramitação", "data": self._formatar_data(data_tramitacao.strip())})
+
+        ultima_acao = linha_selector.xpath("string(.//strong[contains(text(), 'Última Ação:')]/following-sibling::text()[1])").get()
+        if ultima_acao:
+            status_list.append({"descricao": f"Última Ação: {ultima_acao.strip()}", "data": None})
+
+        if status_list:
+            item['status'] = status_list
+
         return item
+
+    def _formatar_data(self, data_texto):
+        if not data_texto:
+            return None
+        # tenta formato "8 de março de 2025"
+        m = re.match(r'(\d{1,2}) de (\w+) de (\d{4})', data_texto.strip(), re.IGNORECASE)
+        MESES = {
+            "janeiro": 1, "fevereiro": 2, "março": 3, "abril": 4,
+            "maio": 5, "junho": 6, "julho": 7, "agosto": 8,
+            "setembro": 9, "outubro": 10, "novembro": 11, "dezembro": 12
+        }
+        if m:
+            dia, mes_nome, ano = m.groups()
+            mes = MESES.get(mes_nome.lower())
+            if mes:
+                return f"{ano}-{mes:02d}-{int(dia):02d}"
+        # tenta dd/mm/yyyy
+        try:
+            return datetime.strptime(data_texto.strip(), "%d/%m/%Y").strftime("%Y-%m-%d")
+        except ValueError:
+            pass
+        # tenta yyyy-mm-dd
+        try:
+            return datetime.strptime(data_texto.strip(), "%Y-%m-%d").strftime("%Y-%m-%d")
+        except ValueError:
+            return None
