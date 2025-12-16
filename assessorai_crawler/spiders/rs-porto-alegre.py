@@ -124,12 +124,20 @@ class RsPortoAlegreSpider(scrapy.Spider):
             item["author"] = [a.strip() for a in autores.split(",")]
 
         # Ementa
-        emenda = response.css("dl.dados dt:contains('Ementa') + dd::text").get()
+        emenda = response.xpath("//dl[@class='dados']/dt[contains(text(),'Ementa')]/following-sibling::dd/text()").get()
+        if not emenda:
+            # fallback: pega o texto do <p class="ui sub header">
+            emenda = response.css("p.ui.sub.header::text").get()
+
         if emenda:
-            item["emenda"] = emenda.strip()
+            # remove número de protocolo no início
+            emenda = re.sub(r"^\s*\d+\.\d+/\d{4}-\d+\s*-?\s*", "", emenda).strip()
+            item["emenda"] = emenda
         else:
-            # garante que o campo exista, mesmo sem assunto
-            item["emenda"] = ["Sem dados informados"]
+            item["emenda"] = "Sem dados informados"
+
+
+
 
         # Assuntos
         subjects = response.css("dl.dados dt:contains('Assunto') + dd::text").get()
