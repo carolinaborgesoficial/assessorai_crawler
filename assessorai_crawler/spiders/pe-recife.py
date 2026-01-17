@@ -132,7 +132,7 @@ class PeRecifeSpider(scrapy.Spider):
         TYPE_MAP = {
             "Projeto de Lei Ordinária": "PL",
             "Projeto de Emenda à Lei Orgânica": "PLO",
-            "Projeto de Decreto Legislativo": "PDL",
+            "Projeto de Lei Complementar": "PLC",
             "Projeto de Lei do Executivo": "PLE"
         }
 
