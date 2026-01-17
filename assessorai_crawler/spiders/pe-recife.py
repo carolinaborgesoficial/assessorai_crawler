@@ -37,7 +37,7 @@ class PeRecifeSpider(scrapy.Spider):
             self.logger.info(f"Limite ativo: {self.limit}")
 
         self.base_params = {
-            "lst_tip_materia": [14, 28, 10],
+            "lst_tip_materia": [14, 28, 10, 11],
             "txt_numero": "",
             "txt_ano": self.year,
             "txt_num_protocolo": "",
@@ -64,16 +64,21 @@ class PeRecifeSpider(scrapy.Spider):
 
     def start_requests(self):
         params = self.base_params | {"page": 1, "step": 10}
-        url = f"{BASE}/consultas/materia/materia_pesquisar_proc?{urlencode(params, doseq=True)}"
+        url = (
+            f"{BASE}/consultas/materia/materia_pesquisar_proc?"
+            f"{urlencode(params, doseq=True)}"
+        )
         yield scrapy.Request(url, callback=self.parse, meta={"page": 1})
 
     def parse(self, response):
         soup = BeautifulSoup(response.text, "html.parser")
         itens = soup.select("ul.list-group.list-group-flush li.list-group-item")
 
-        self.logger.info(f"Página {response.meta['page']} | Itens: {len(itens)}")
+        current_page = response.meta["page"]
+        self.logger.info(f"Página {current_page} | Itens: {len(itens)}")
 
         if not itens:
+            self.logger.info("Nenhum item encontrado. Encerrando spider.")
             return
 
         for li in itens:
@@ -86,11 +91,30 @@ class PeRecifeSpider(scrapy.Spider):
                 self.items_count += 1
                 yield item
 
-        next_page = response.meta["page"] + 1
-        params = self.base_params | {"page": next_page, "step": 10}
-        next_url = f"{BASE}/consultas/materia/materia_pesquisar_proc?{urlencode(params, doseq=True)}"
+        # === critério de parada: só continua se existir link para a PRÓXIMA página ===
+        next_page_str = f"page={current_page + 1}"
+        has_next = soup.select_one(
+            f"ul.pagination a.page-link[href*='{next_page_str}']"
+        )
 
-        yield scrapy.Request(next_url, callback=self.parse, meta={"page": next_page})
+        if not has_next:
+            self.logger.info(
+                f"Página {current_page} é a última. Encerrando paginação."
+            )
+            return
+
+        next_page = current_page + 1
+        params = self.base_params | {"page": next_page, "step": 10}
+        next_url = (
+            f"{BASE}/consultas/materia/materia_pesquisar_proc?"
+            f"{urlencode(params, doseq=True)}"
+        )
+
+        yield scrapy.Request(
+            next_url,
+            callback=self.parse,
+            meta={"page": next_page},
+        )
 
     def parse_item(self, li):
         title_el = li.select_one("span.h6")
@@ -109,6 +133,7 @@ class PeRecifeSpider(scrapy.Spider):
             "Projeto de Lei Ordinária": "PL",
             "Projeto de Emenda à Lei Orgânica": "PLO",
             "Projeto de Decreto Legislativo": "PDL",
+            "Projeto de Lei do Executivo": "PLE"
         }
 
         doc_type = TYPE_MAP.get(raw_type, slugify(raw_type))
@@ -191,7 +216,9 @@ class PeRecifeSpider(scrapy.Spider):
                     status_list.append({"descricao": t, "data": d})
 
         item = ProposicaoItem()
-        item["uuid"] = hashlib.md5(f"{doc_type}-{number}-{year}".encode()).hexdigest()
+        item["uuid"] = hashlib.md5(
+            f"{doc_type}-{number}-{year}".encode()
+        ).hexdigest()
         item["type"] = doc_type
         item["number"] = number
         item["year"] = year
